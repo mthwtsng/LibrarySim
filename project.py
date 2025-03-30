@@ -330,6 +330,94 @@ def register_event(event_id=None):
         # This handles any UNIQUE constraint errors, etc.
         print("Error registering for the event (duplicate or constraint issue).")
         print("Details:", e)
+def volunteer():
+    print("\n--- Volunteer for the Library ---")
+
+    name=input("Enter your Name: ")
+    email=input("Enter your Email: ")
+    phone=input("Enter your Phone Number: ")
+
+    cursor.execute(
+        """
+        SELECT * FROM Personnel
+        WHERE Name=? AND Email=? AND Role='Volunteer'
+        """,(name,email)
+    )
+    existing=cursor.fetchone()
+    if existing:
+        print("You are already a registered volunteer.")
+        return
+
+    try:
+        cursor.execute("""
+            INSERT INTO Personnel (Name,Role,Email,PhoneNumber)
+            VALUES (?,'Volunteer',?,?)
+        """, (name,email,phone))
+        conn.commit()
+
+        staff_id=cursor.lastrowid
+        print("Successfully registered as a volunteer!")
+        print(f"Your Volunteer ID is: {staff_id}")
+    except sql.IntegrityError as e:
+        print("Error registering as a volunteer (duplicate or constraint issue).")
+        
+def ask_help():
+    print("\n--- Ask a Librarian for Help ---")
+
+    # Search for all personnel with 'Librarian' in their role
+    cursor.execute("SELECT * FROM Personnel WHERE Role LIKE '%Librarian%'")
+    librarians = cursor.fetchall()
+
+    if not librarians:
+        print("No librarians found.")
+        return
+
+    columns = [desc[0] for desc in cursor.description]
+    page = 0
+
+    while True:
+        start = page * ITEMS_PER_PAGE
+        end = start + ITEMS_PER_PAGE
+        current = librarians[start:end]
+
+        print("\n--------- Available Librarians ---------")
+        print(f"{'No.':<4} " + " | ".join([f"{col:<15}" for col in columns]))
+        print("-" * 60)
+
+        for i, librarian in enumerate(current, start=start + 1):
+            print(f"{i:<4} " + " | ".join([str(val)[:15].ljust(15) for val in librarian]))
+
+        print("\nOptions: [N]ext Page | [P]revious Page | [M]ain Menu | [Select Number]")
+        choice = input("Choose an option: ").strip().lower()
+
+        if choice == "n":
+            if end < len(librarians):
+                page += 1
+            else:
+                print("Already on the last page.")
+        elif choice == "p":
+            if page > 0:
+                page -= 1
+            else:
+                print("Already on the first page.")
+        elif choice == "m":
+            return
+        elif choice.isdigit():
+            index = int(choice) - 1
+            if 0 <= index < len(librarians):
+                librarian = librarians[index]
+                print("\n--- Librarian Contact Info ---")
+                print(f"Name:         {librarian[1]}")
+                print(f"Email:        {librarian[3]}")
+                print(f"Phone Number: {librarian[4]}\n")
+                input("Press Enter to return to the librarian list...")
+            else:
+                print("Invalid selection.")
+        else:
+            print("Invalid choice. Try again.")
+
+        
+        
 
 
 if __name__ == "__main__":
