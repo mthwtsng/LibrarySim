@@ -17,6 +17,7 @@ def main_menu():
         print("7. Volunteer for the library")
         print("8. Ask for help from a librarian")
         print("9. Exit")
+        print("10. Register for an account")
         
         choice = input("Select an option: ")
         if choice == '9':
@@ -38,6 +39,8 @@ def main_menu():
             volunteer()
         elif choice == '8':
             ask_help()
+        elif choice=='10':
+            register_account()
         else:
             print("Invalid choice. Try again.")
 
@@ -107,11 +110,14 @@ def borrow_item(item_id=None, copy_id=None):
         "VALUES (?, ?, DATE('now'), DATE('now', '+14 days'), NULL, 0, 'Unpaid')",
         (borrower_id, copy_id)
     )
+    transaction_id = cursor.lastrowid
     
     cursor.execute("UPDATE LibraryCopy SET Status='Borrow' WHERE CopyID=?", (copy_id,))
     conn.commit()
     
     print("\nItem borrowed successfully! Due in 14 days.")
+    print(f"Your Transaction ID is: {transaction_id}")
+
 
 
 def donate_item():
@@ -138,6 +144,192 @@ def donate_item():
 
     print("A new copy has been added and is now available in the library!")
 
+def return_item():
+    borrower_id = input("Enter your Borrower ID: ")
+    cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?",(borrower_id,))
+    borrower=cursor.fetchone()
+    if not borrower:
+        print("Invalid Borrower ID.")
+        return
+    transaction_id=input("Enter the Transaction ID you want to return:")
+    cursor.execute("""
+        SELECT TransactionID,DueDate,ReturnDate,CopyID
+        FROM BorrowingTransactions
+        WHERE TransactionID=? AND BorrowerID=?
+    """, (transaction_id, borrower_id))
+    transaction=cursor.fetchone()
+    if not transaction:
+        print("No matching transaction found.")
+        return
+    db_transaction_id, db_due_date, db_return_date, db_copy_id = transaction
+
+    if db_return_date:
+        print("This item was already returned.")
+        return
+    
+    cursor.execute("""
+        UPDATE BorrowingTransactions
+        SET ReturnDate=DATE('now')
+        WHERE TransactionID=?""", (db_transaction_id,))
+    
+    cursor.execute("""
+        UPDATE LibraryCopy
+        SET Status='onShelf'
+        WHERE CopyID=?""", (db_copy_id,)) 
+    conn.commit()
+    print("Return process complete! The item is now marked as returned.\n")
+
+def register_account():
+    print("\n--- Register a New Library Account ---")
+
+    # Keep prompting until a valid (non-empty) name is entered
+    while True:
+        name = input("Enter your Name: ").strip()
+        if name:
+            break
+        print("Name cannot be empty. Please try again.")
+
+    while True:
+        email = input("Enter your Email: ").strip()
+        if email:
+            break
+        print("Email cannot be empty. Please try again.")
+
+
+    phone = input("Enter your Phone Number: ").strip()
+    address = input("Enter your Address: ").strip()
+   
+
+    # Insert into the database
+    try:
+        cursor.execute(
+            """
+            INSERT INTO Borrowers (Name, Email, PhoneNumber, Address)
+            VALUES (?, ?, ?, ?)
+            """,
+            (name, email, phone, address)
+        )
+        conn.commit()
+        borrower_id = cursor.lastrowid
+        print(f"\nAccount created successfully! Your Borrower ID is: {borrower_id}")
+    except sql.Error as e:
+        print("Error registering account:", e)
+
+
+def find_event():
+    event_name = input("Enter the name of the event you're looking for: ")
+    
+    # 1) Query the Events table by partial match
+    cursor.execute("SELECT * FROM Events WHERE EventName LIKE ?", (f"%{event_name}%",))
+    events = cursor.fetchall()
+    
+    # 2) Column headers, if you want to display them
+    columns = [desc[0] for desc in cursor.description]
+
+    if not events:
+        print("\nNo events found with that name.")
+        return
+
+    # 3) Paginate the results
+    page = 0
+    while True:
+        start = page * ITEMS_PER_PAGE
+        end = start + ITEMS_PER_PAGE
+        current_events = events[start:end]
+
+        print("\n---------    Search Results    ---------------")
+        print(f"{'No.':<4} " + " | ".join([f"{col:<15}" for col in columns]))
+        print("-" * 50)
+
+        for i, event in enumerate(current_events, start=start + 1):
+            # Show each row truncated to 15 chars
+            print(f"{i:<4} " + " | ".join([str(val)[:15].ljust(15) for val in event]))
+
+        print("\nOptions: [N]ext Page | [P]revious Page | [M]ain Menu | [Select Number]")
+        choice = input("\nChoose an option: ").strip().lower()
+
+        if choice == "n":
+            # Go to next page if possible
+            if end < len(events):
+                page += 1
+            else:
+                print("Already on the last page.")
+        elif choice == "p":
+            # Go to previous page if possible
+            if page > 0:
+                page -= 1
+            else:
+                print("Already on the first page.")
+        elif choice == "m":
+            # Return to main menu
+            return
+        elif choice.isdigit():
+            # User selected a specific event by index
+            index = int(choice) - 1
+            if 0 <= index < len(events):
+                selected_event = events[index]
+                view_event_details(selected_event)
+            else:
+                print("Invalid selection.")
+        else:
+            print("Invalid choice. Try again.")
+
+    
+def register_event(event_id=None):
+    """
+    Registers a borrower for an event in the Events table
+    by adding a row to the EventRegistration table.
+    """
+    print("\n--- Register for an Event ---")
+    
+    # 1) Prompt for Borrower ID
+    borrower_id = input("Enter your Borrower ID: ")
+    
+    # Confirm borrower exists
+    cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
+    borrower = cursor.fetchone()
+    if not borrower:
+        print("Invalid Borrower ID. Please create an account first or recheck your ID.")
+        return
+
+    # 2) Prompt for Event ID if not provided
+    if not event_id:
+        event_id = input("Enter the Event ID you want to register for: ")
+
+    # Check if the event exists
+    cursor.execute("SELECT * FROM Events WHERE EventID=?", (event_id,))
+    event_row = cursor.fetchone()
+    if not event_row:
+        print("No event found with that ID.")
+        return
+
+    # 3) Check if already registered (optional check for user-friendly message)
+    cursor.execute("""
+        SELECT *
+        FROM EventRegistration
+        WHERE EventID=? AND BorrowerID=?
+    """, (event_id, borrower_id))
+    existing_registration = cursor.fetchone()
+    if existing_registration:
+        print("You are already registered for this event.")
+        return
+
+    # 4) Insert new row into EventRegistration
+    try:
+        cursor.execute("""
+            INSERT INTO EventRegistration (EventID, BorrowerID, RegistrationDate)
+            VALUES (?, ?, DATE('now'))
+        """, (event_id, borrower_id))
+        conn.commit()
+
+        registration_id = cursor.lastrowid
+        print(f"Successfully registered for the event!")
+        print(f"Your Event Registration ID is: {registration_id}")
+
+    except sql.IntegrityError as e:
+        # This handles any UNIQUE constraint errors, etc.
+        print("Error registering for the event (duplicate or constraint issue).")
+        print("Details:", e)
 
 
 if __name__ == "__main__":
