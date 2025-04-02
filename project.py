@@ -7,7 +7,7 @@ ITEMS_PER_PAGE = 5
 
 def main_menu():
     while True:
-        print("Library System")
+        print("\nLibrary System")
         print("1. Find an item in the library")
         print("2. Borrow an item from the library")
         print("3. Return a borrowed item")
@@ -16,15 +16,18 @@ def main_menu():
         print("6. Register for an event")
         print("7. Volunteer for the library")
         print("8. Ask for help from a librarian")
-        print("9. Exit")
-        print("10. Register for an account")
+        print("9. Register for an account")
+        print("10. Exit")
+
         
-        choice = input("Select an option: ")
-        if choice == '9':
+        choice = input("\nSelect an option: ")
+        if choice == '10':
             print("Exiting system. Goodbye!")
             break
         elif choice == '1':
-            find_item()
+            result = find_item()
+            if result == 'main_menu':
+                continue 
         elif choice == '2':
             borrow_item()
         elif choice == '3':
@@ -39,28 +42,69 @@ def main_menu():
             volunteer()
         elif choice == '8':
             ask_help()
-        elif choice=='10':
+        elif choice=='9':
             register_account()
         else:
             print("Invalid choice. Try again.")
 
 def find_item():
-    title = input("Enter title of the item: ")
+    while True:
+        print("\n--- Find Library Items ---")
+        print("1. List all items")
+        print("2. Search by title")
+        print("3. Return to main menu")
+        
+        choice = input("\nSelect an option: ").strip()
+        
+        if choice == '1':
+            if list_all_items() == 'main_menu':
+                return 'main_menu'
+        elif choice == '2':
+            if search_by_title() == 'main_menu':
+                return 'main_menu'
+        elif choice == '3':
+            return
+        else:
+            print("Invalid choice. Please try again.")
+
+def list_all_items():
+    cursor.execute("SELECT * FROM LibraryItem")
+    items = cursor.fetchall()
+    columns = [desc[0] for desc in cursor.description]
+    
+    if not items:
+        print("\nNo items found in the library.")
+        return
+    
+    result = display_items_with_pagination(items, columns, "All Library Items")
+    if result == 'main_menu':
+        return 'main_menu'
+
+def search_by_title():
+    title = input("\nEnter title of the item (leave blank to return): ").strip()
+    if not title:
+        return
+        
     cursor.execute("SELECT * FROM LibraryItem WHERE Title LIKE ?", (f"%{title}%",))
     items = cursor.fetchall()
     columns = [desc[0] for desc in cursor.description]
 
     if not items:
-        print("\nItem not found.")
+        print("\nNo items found matching that title.")
         return
     
+    result = display_items_with_pagination(items, columns, f"Search Results for '{title}'")
+    if result == 'main_menu':
+        return 'main_menu'
+
+def display_items_with_pagination(items, columns, title):
     page = 0
     while True:
         start = page * ITEMS_PER_PAGE
         end = start + ITEMS_PER_PAGE
         current_items = items[start:end]
 
-        print("---------    Search Results    ---------------")
+        print(f"\n---------    {title}    ---------------")
         print(f"{'No.':<4} " + " | ".join([f"{col:<15}" for col in columns]))
         print("-" * 40)
 
@@ -75,7 +119,7 @@ def find_item():
         elif choice == "p" and page > 0:
             page -= 1
         elif choice == "m":
-            return
+            return 'main_menu' 
         elif choice.isdigit():
             index = int(choice) - 1
             if 0 <= index < len(items):
@@ -85,11 +129,58 @@ def find_item():
         else:
             print("Invalid choice. Try again.")
 
+def view_book_details(item):
+    columns = [desc[0] for desc in cursor.description]
+    print("\n" + "="*50)
+    print("ITEM DETAILS".center(50))
+    print("="*50)
+    
+    for col, val in zip(columns, item):
+        print(f"{col:<20}: {val}")
+    
+    item_id = item[0]
+    cursor.execute("""
+        SELECT COUNT(*) 
+        FROM LibraryCopy 
+        WHERE ItemID=? AND Status='onShelf'
+    """, (item_id,))
+    available_copies = cursor.fetchone()[0]
+    
+    print("\n" + "-"*50)
+    print(f"Available copies: {available_copies}")
+    print("-"*50)
+
+    print("\nOptions:")
+    print("[B]orrow this item")
+    print("[R]eturn to list")
+    print("[M]ain menu")
+    
+    while True:
+        choice = input("Choose an option: ").strip().lower()
+        if choice == 'b':
+            cursor.execute("""
+                SELECT CopyID 
+                FROM LibraryCopy 
+                WHERE ItemID=? AND Status='onShelf' 
+                LIMIT 1
+            """, (item_id,))
+            copy = cursor.fetchone()
+            if copy:
+                borrow_item(item_id=item_id, copy_id=copy[0])
+            else:
+                print("\nNo available copies to borrow.\n")
+            return  
+        elif choice == 'r':
+            return
+        elif choice == 'm':
+            main_menu()
+            return
+        else:
+            print("Invalid choice. Try again.")
 
 
 def borrow_item(item_id=None, copy_id=None):
-    borrower_id = input("Enter your Borrower ID: ")
-    
+    borrower_id = input("\nEnter your Borrower ID: ")
     cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
     borrower = cursor.fetchone()
     if not borrower:
@@ -121,7 +212,7 @@ def borrow_item(item_id=None, copy_id=None):
 
 
 def donate_item():
-    title = input("Enter title of the item: ")
+    title = input("\nEnter title of the item: ")
     item_type = input("Enter item type: ")
     author = input("Enter author/creator: ")
     year = input("Enter year published: ")
@@ -138,7 +229,6 @@ def donate_item():
         item_id = cursor.lastrowid
         print("\nNew item added to the library catalog!")
 
-    # Add a physical copy to the library
     cursor.execute("INSERT INTO LibraryCopy (ItemID, Status) VALUES (?, 'onShelf')", (item_id,))
     conn.commit()
 
@@ -146,43 +236,83 @@ def donate_item():
 
 def return_item():
     borrower_id = input("Enter your Borrower ID: ")
-    cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?",(borrower_id,))
-    borrower=cursor.fetchone()
+    cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
+    borrower = cursor.fetchone()
+    
     if not borrower:
         print("Invalid Borrower ID.")
         return
-    transaction_id=input("Enter the Transaction ID you want to return:")
-    cursor.execute("""
-        SELECT TransactionID,DueDate,ReturnDate,CopyID
-        FROM BorrowingTransactions
-        WHERE TransactionID=? AND BorrowerID=?
-    """, (transaction_id, borrower_id))
-    transaction=cursor.fetchone()
-    if not transaction:
-        print("No matching transaction found.")
-        return
-    db_transaction_id, db_due_date, db_return_date, db_copy_id = transaction
 
-    if db_return_date:
-        print("This item was already returned.")
+    cursor.execute("""
+        SELECT bt.TransactionID, li.ItemID, li.Title, li.AuthorCreator, bt.BorrowDate, bt.DueDate
+        FROM BorrowingTransactions bt
+        JOIN LibraryCopy lc ON bt.CopyID = lc.CopyID
+        JOIN LibraryItem li ON lc.ItemID = li.ItemID
+        WHERE bt.BorrowerID = ? AND bt.ReturnDate IS NULL
+    """, (borrower_id,))
+    
+    borrowed_books = cursor.fetchall()
+    
+    if not borrowed_books:
+        print("You have no books currently borrowed.")
         return
     
-    cursor.execute("""
-        UPDATE BorrowingTransactions
-        SET ReturnDate=DATE('now')
-        WHERE TransactionID=?""", (db_transaction_id,))
+    columns = ["No.", "Transaction ID", "Item ID", "Title", "Author", "Borrow Date", "Due Date"]
+    page = 0
+    ITEMS_PER_PAGE = 5
     
-    cursor.execute("""
-        UPDATE LibraryCopy
-        SET Status='onShelf'
-        WHERE CopyID=?""", (db_copy_id,)) 
-    conn.commit()
-    print("Return process complete! The item is now marked as returned.\n")
+    while True:
+        start = page * ITEMS_PER_PAGE
+        end = start + ITEMS_PER_PAGE
+        current_page = borrowed_books[start:end]
+
+        print("\n---------    Your Borrowed Items    ---------------")
+        print(" | ".join([f"{col:<15}" for col in columns]))
+        print("-" * (15 * len(columns) + 3 * (len(columns)-1)))
+
+        for i, book in enumerate(current_page, start=1 + start):
+            transaction_id, item_id, title, author, borrow_date, due_date = book
+            print(f"{i:<15} | {transaction_id:<15} | {item_id:<15} | {title[:15]:<15} | "
+                  f"{author[:15]:<15} | {borrow_date:<15} | {due_date:<15}")
+
+        print("\nOptions: [N]ext Page | [P]revious Page | [M]ain Menu | [Select Number]")
+        choice = input("\nChoose an option: ").strip().lower()
+
+        if choice == "n" and end < len(borrowed_books):
+            page += 1
+        elif choice == "p" and page > 0:
+            page -= 1
+        elif choice == "m":
+            return
+        elif choice.isdigit():
+            index = int(choice) - 1
+            if 0 <= index < len(borrowed_books):
+                transaction_id = borrowed_books[index][0]
+                cursor.execute("""
+                    UPDATE BorrowingTransactions
+                    SET ReturnDate=DATE('now')
+                    WHERE TransactionID=?
+                """, (transaction_id,))
+                
+                cursor.execute("""
+                    UPDATE LibraryCopy
+                    SET Status='onShelf'
+                    WHERE CopyID=(
+                        SELECT CopyID FROM BorrowingTransactions WHERE TransactionID=?
+                    )
+                """, (transaction_id,))
+                
+                conn.commit()
+                print("\nItem returned successfully!")
+                return
+            else:
+                print("Invalid selection.")
+        else:
+            print("Invalid choice. Try again.")
 
 def register_account():
     print("\n--- Register a New Library Account ---")
 
-    # Keep prompting until a valid (non-empty) name is entered
     while True:
         name = input("Enter your Name: ").strip()
         if name:
@@ -199,8 +329,6 @@ def register_account():
     phone = input("Enter your Phone Number: ").strip()
     address = input("Enter your Address: ").strip()
    
-
-    # Insert into the database
     try:
         cursor.execute(
             """
@@ -218,19 +346,16 @@ def register_account():
 
 def find_event():
     event_name = input("Enter the name of the event you're looking for: ")
-    
-    # 1) Query the Events table by partial match
+
     cursor.execute("SELECT * FROM Events WHERE EventName LIKE ?", (f"%{event_name}%",))
     events = cursor.fetchall()
     
-    # 2) Column headers, if you want to display them
     columns = [desc[0] for desc in cursor.description]
 
     if not events:
         print("\nNo events found with that name.")
         return
 
-    # 3) Paginate the results
     page = 0
     while True:
         start = page * ITEMS_PER_PAGE
@@ -242,29 +367,24 @@ def find_event():
         print("-" * 50)
 
         for i, event in enumerate(current_events, start=start + 1):
-            # Show each row truncated to 15 chars
             print(f"{i:<4} " + " | ".join([str(val)[:15].ljust(15) for val in event]))
 
         print("\nOptions: [N]ext Page | [P]revious Page | [M]ain Menu | [Select Number]")
         choice = input("\nChoose an option: ").strip().lower()
 
         if choice == "n":
-            # Go to next page if possible
             if end < len(events):
                 page += 1
             else:
                 print("Already on the last page.")
         elif choice == "p":
-            # Go to previous page if possible
             if page > 0:
                 page -= 1
             else:
                 print("Already on the first page.")
         elif choice == "m":
-            # Return to main menu
             return
         elif choice.isdigit():
-            # User selected a specific event by index
             index = int(choice) - 1
             if 0 <= index < len(events):
                 selected_event = events[index]
