@@ -439,44 +439,133 @@ def register_account():
         print("Error registering account:", e)
 
 def find_event():
-    """Searches for library events with pagination"""
-    event_name = input("Enter the name of the event you're looking for: ")
-    cursor.execute("SELECT * FROM Events WHERE EventName LIKE ?", (f"%{event_name}%",))
-    events = cursor.fetchall()
-    columns = [desc[0] for desc in cursor.description]
+    """Searches for library events with pagination and view all option"""
+    while True:
+        print("\n--- Find Library Events ---")
+        print("1. List all upcoming events")
+        print("2. Search events by name")
+        print("3. View events by type")
+        print("4. Return to main menu")
+        
+        choice = input("\nSelect an option: ").strip()
+        
+        if choice == '1':
+            cursor.execute("""
+                SELECT EventID, EventName, EventType, 
+                       strftime('%Y-%m-%d %H:%M', DateTime) as FormattedDate,
+                       Location, Capacity - 
+                       (SELECT COUNT(*) FROM EventRegistration er WHERE er.EventID = e.EventID) as RemainingSpots
+                FROM Events e
+                WHERE DateTime >= datetime('now')
+                ORDER BY DateTime
+            """)
+            events = cursor.fetchall()
+            
+            if not events:
+                print("\nNo upcoming events found.")
+                continue
+                
+            columns = ["ID", "Event Name", "Type", "Date/Time", "Location", "Spots Left"]
+            result = display_events_with_pagination(events, columns, "Upcoming Events")
+            if result == 'main_menu':
+                return 'main_menu'
+                
+        elif choice == '2':
+            event_name = input("Enter event name (leave blank to cancel): ").strip()
+            if not event_name:
+                continue
+                
+            cursor.execute("""
+                SELECT EventID, EventName, EventType, 
+                       strftime('%Y-%m-%d %H:%M', DateTime) as FormattedDate,
+                       Location, Capacity - 
+                       (SELECT COUNT(*) FROM EventRegistration er WHERE er.EventID = e.EventID) as RemainingSpots
+                FROM Events e
+                WHERE EventName LIKE ? 
+                AND DateTime >= datetime('now')
+                ORDER BY DateTime
+            """, (f"%{event_name}%",))
+            
+            events = cursor.fetchall()
+            
+            if not events:
+                print("\nNo upcoming events found matching that name.")
+                continue
+                
+            columns = ["ID", "Event Name", "Type", "Date/Time", "Location", "Spots Left"]
+            result = display_events_with_pagination(events, columns, f"Events matching '{event_name}'")
+            if result == 'main_menu':
+                return 'main_menu'
+                
+        elif choice == '3':
+            cursor.execute("SELECT DISTINCT EventType FROM Events WHERE EventType IS NOT NULL")
+            event_types = cursor.fetchall()
+            
+            if not event_types:
+                print("\nNo event categories available.")
+                continue
+                
+            print("\nAvailable Event Types:")
+            for i, (etype,) in enumerate(event_types, 1):
+                print(f"{i}. {etype}")
+                
+            type_choice = input("Select event type number (or 0 to cancel): ").strip()
+            if not type_choice.isdigit() or int(type_choice) < 1 or int(type_choice) > len(event_types):
+                continue
+                
+            selected_type = event_types[int(type_choice)-1][0]
+            
+            cursor.execute("""
+                SELECT EventID, EventName, EventType, 
+                       strftime('%Y-%m-%d %H:%M', DateTime) as FormattedDate,
+                       Location, Capacity - 
+                       (SELECT COUNT(*) FROM EventRegistration er WHERE er.EventID = e.EventID) as RemainingSpots
+                FROM Events e
+                WHERE EventType = ? 
+                AND DateTime >= datetime('now')
+                ORDER BY DateTime
+            """, (selected_type,))
+            
+            events = cursor.fetchall()
+            
+            if not events:
+                print(f"\nNo upcoming {selected_type} events found.")
+                continue
+                
+            columns = ["ID", "Event Name", "Type", "Date/Time", "Location", "Spots Left"]
+            result = display_events_with_pagination(events, columns, f"{selected_type} Events")
+            if result == 'main_menu':
+                return 'main_menu'
+                
+        elif choice == '4':
+            return
+        else:
+            print("Invalid choice. Please try again.")
 
-    if not events:
-        print("\nNo events found with that name.")
-        return
-
+def display_events_with_pagination(events, columns, title):
+    """Displays events with pagination controls and selection options"""
     page = 0
     while True:
         start = page * ITEMS_PER_PAGE
         end = start + ITEMS_PER_PAGE
         current_events = events[start:end]
 
-        print("\n---------    Search Results    ---------------")
+        print(f"\n---------    {title}    ---------------")
         print(f"{'No.':<4} " + " | ".join([f"{col:<15}" for col in columns]))
-        print("-" * 50)
+        print("-" * 60)
 
-        for i, event in enumerate(current_events, start=start + 1):
+        for i, event in enumerate(current_events, start=1 + start):
             print(f"{i:<4} " + " | ".join([str(val)[:15].ljust(15) for val in event]))
 
         print("\nOptions: [N]ext Page | [P]revious Page | [M]ain Menu | [Select Number]")
         choice = input("\nChoose an option: ").strip().lower()
 
-        if choice == "n":
-            if end < len(events):
-                page += 1
-            else:
-                print("Already on the last page.")
-        elif choice == "p":
-            if page > 0:
-                page -= 1
-            else:
-                print("Already on the first page.")
+        if choice == "n" and end < len(events):
+            page += 1
+        elif choice == "p" and page > 0:
+            page -= 1
         elif choice == "m":
-            return
+            return 'main_menu'
         elif choice.isdigit():
             index = int(choice) - 1
             if 0 <= index < len(events):
@@ -488,24 +577,50 @@ def find_event():
             print("Invalid choice. Try again.")
 
 def view_event_details(event):
-    """Displays detailed information about a specific event."""
+    """Displays detailed information about a specific event"""
+    event_id = event[0]
+    cursor.execute("""
+        SELECT e.*, 
+               strftime('%Y-%m-%d %H:%M', e.DateTime) as FormattedDate,
+               (SELECT COUNT(*) FROM EventRegistration er WHERE er.EventID = e.EventID) as RegisteredCount
+        FROM Events e
+        WHERE e.EventID = ?
+    """, (event_id,))
+    
+    full_event = cursor.fetchone()
     columns = [desc[0] for desc in cursor.description]
-    print("\n" + "="*50)
-    print("EVENT DETAILS".center(50))
-    print("="*50)
     
-    for col, val in zip(columns, event):
-        print(f"{col:<20}: {val}")
+    print("\n" + "="*60)
+    print("EVENT DETAILS".center(60))
+    print("="*60)
+
+    display_fields = {
+        'EventName': 'Event Name',
+        'EventType': 'Type',
+        'FormattedDate': 'Date/Time',
+        'Location': 'Location',
+        'RecommendedAudience': 'Recommended For',
+        'RegisteredCount': 'Registered',
+        'Capacity': 'Capacity'
+    }
     
+    for col in columns:
+        if col in display_fields and full_event[columns.index(col)] is not None:
+            print(f"{display_fields[col]:<20}: {full_event[columns.index(col)]}")
+    
+    remaining = full_event[columns.index('Capacity')] - full_event[columns.index('RegisteredCount')]
+    print(f"{'Spots Available':<20}: {remaining}")
+    print("="*60)
+
     print("\nOptions:")
     print("[R]egister for this event")
-    print("[B]ack to list")
+    print("[B]ack to event list")
     print("[M]ain menu")
     
     while True:
         choice = input("Choose an option: ").strip().lower()
         if choice == 'r':
-            register_event(event[0]) 
+            register_event(event_id)
             return
         elif choice == 'b':
             return
@@ -516,40 +631,47 @@ def view_event_details(event):
             print("Invalid choice. Try again.")
 
 def register_event(event_id=None):
-    """Registers a borrower for a library event"""
-    print("\n--- Register for an Event ---")
-    borrower_id = input("Enter your Borrower ID: ")
-    
-    cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
-    borrower = cursor.fetchone()
-    if not borrower:
-        print("Invalid Borrower ID. Please create an account first or recheck your ID.")
-        return
-
-    if not event_id:
+    """Registers a borrower for a library event with capacity checking"""
+    if event_id is None:
         event_id = input("Enter the Event ID you want to register for: ")
-
-    cursor.execute("SELECT * FROM Events WHERE EventID=?", (event_id,))
-    event_row = cursor.fetchone()
-    if not event_row:
+    cursor.execute("""
+        SELECT e.Capacity, 
+               (SELECT COUNT(*) FROM EventRegistration er WHERE er.EventID = e.EventID) as RegisteredCount
+        FROM Events e
+        WHERE e.EventID = ?
+    """, (event_id,))
+    
+    event_data = cursor.fetchone()
+    if not event_data:
         print("No event found with that ID.")
         return
-
-    cursor.execute("SELECT * FROM EventRegistration WHERE EventID=? AND BorrowerID=?", (event_id, borrower_id))
-    existing_registration = cursor.fetchone()
-    if existing_registration:
+    
+    capacity, registered = event_data
+    if registered >= capacity:
+        print("This event is already at full capacity.")
+        return
+    
+    borrower_id = input("Enter your Borrower ID: ")
+    cursor.execute("""
+        SELECT 1 FROM EventRegistration 
+        WHERE EventID = ? AND BorrowerID = ?
+    """, (event_id, borrower_id))
+    
+    if cursor.fetchone():
         print("You are already registered for this event.")
         return
-
+    
     try:
-        cursor.execute("INSERT INTO EventRegistration (EventID, BorrowerID, RegistrationDate) VALUES (?, ?, DATE('now'))",
-                       (event_id, borrower_id))
+        cursor.execute("""
+            INSERT INTO EventRegistration (EventID, BorrowerID, RegistrationDate)
+            VALUES (?, ?, datetime('now'))
+        """, (event_id, borrower_id))
         conn.commit()
-        registration_id = cursor.lastrowid
-        print(f"Successfully registered for the event!")
-        print(f"Your Event Registration ID is: {registration_id}")
-    except sql.IntegrityError as e:
-        print("Error registering for the event (duplicate or constraint issue).")
+        
+        print("\nRegistration successful!")
+        print(f"Remaining spots: {capacity - registered - 1}")
+    except sql.Error as e:
+        print("Error registering for event:", e)
 
 def volunteer():
     """Registers a new volunteer for the library"""
