@@ -6,6 +6,8 @@ cursor = conn.cursor()
 ITEMS_PER_PAGE = 5  
 
 def main_menu():
+    """Main menu interface for the library system with all available options"""
+    calculate_fines()
     while True:
         print("\nLibrary System")
         print("1. Find an item in the library")
@@ -19,7 +21,6 @@ def main_menu():
         print("9. Register for an account")
         print("10. Exit")
 
-        
         choice = input("\nSelect an option: ")
         if choice == '10':
             print("Exiting system. Goodbye!")
@@ -48,6 +49,7 @@ def main_menu():
             print("Invalid choice. Try again.")
 
 def find_item():
+    """Provides options to list all items or search by title with pagination"""
     while True:
         print("\n--- Find Library Items ---")
         print("1. List all items")
@@ -68,6 +70,7 @@ def find_item():
             print("Invalid choice. Please try again.")
 
 def list_all_items():
+    """Displays all library items with pagination"""
     cursor.execute("SELECT * FROM LibraryItem")
     items = cursor.fetchall()
     columns = [desc[0] for desc in cursor.description]
@@ -81,6 +84,7 @@ def list_all_items():
         return 'main_menu'
 
 def search_by_title():
+    """Searches for items by title with partial matching"""
     title = input("\nEnter title of the item (leave blank to return): ").strip()
     if not title:
         return
@@ -98,6 +102,7 @@ def search_by_title():
         return 'main_menu'
 
 def display_items_with_pagination(items, columns, title):
+    """Displays items with pagination controls and selection options"""
     page = 0
     while True:
         start = page * ITEMS_PER_PAGE
@@ -130,6 +135,7 @@ def display_items_with_pagination(items, columns, title):
             print("Invalid choice. Try again.")
 
 def view_book_details(item):
+    """Displays detailed information about a specific library item"""
     columns = [desc[0] for desc in cursor.description]
     print("\n" + "="*50)
     print("ITEM DETAILS".center(50))
@@ -139,11 +145,7 @@ def view_book_details(item):
         print(f"{col:<20}: {val}")
     
     item_id = item[0]
-    cursor.execute("""
-        SELECT COUNT(*) 
-        FROM LibraryCopy 
-        WHERE ItemID=? AND Status='onShelf'
-    """, (item_id,))
+    cursor.execute("SELECT COUNT(*) FROM LibraryCopy WHERE ItemID=? AND Status='onShelf'", (item_id,))
     available_copies = cursor.fetchone()[0]
     
     print("\n" + "-"*50)
@@ -158,12 +160,7 @@ def view_book_details(item):
     while True:
         choice = input("Choose an option: ").strip().lower()
         if choice == 'b':
-            cursor.execute("""
-                SELECT CopyID 
-                FROM LibraryCopy 
-                WHERE ItemID=? AND Status='onShelf' 
-                LIMIT 1
-            """, (item_id,))
+            cursor.execute("SELECT CopyID FROM LibraryCopy WHERE ItemID=? AND Status='onShelf' LIMIT 1", (item_id,))
             copy = cursor.fetchone()
             if copy:
                 borrow_item(item_id=item_id, copy_id=copy[0])
@@ -178,8 +175,8 @@ def view_book_details(item):
         else:
             print("Invalid choice. Try again.")
 
-
 def borrow_item(item_id=None, copy_id=None):
+    """Handles the process of borrowing a library item"""
     borrower_id = input("\nEnter your Borrower ID: ")
     cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
     borrower = cursor.fetchone()
@@ -209,9 +206,8 @@ def borrow_item(item_id=None, copy_id=None):
     print("\nItem borrowed successfully! Due in 14 days.")
     print(f"Your Transaction ID is: {transaction_id}")
 
-
-
 def donate_item():
+    """Handles donations of new items to the library"""
     title = input("\nEnter title of the item: ")
     item_type = input("Enter item type: ")
     author = input("Enter author/creator: ")
@@ -235,6 +231,7 @@ def donate_item():
     print("A new copy has been added and is now available in the library!")
 
 def return_item():
+    """Handles returning borrowed items to the library"""
     borrower_id = input("Enter your Borrower ID: ")
     cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
     borrower = cursor.fetchone()
@@ -259,7 +256,6 @@ def return_item():
     
     columns = ["No.", "Transaction ID", "Item ID", "Title", "Author", "Borrow Date", "Due Date"]
     page = 0
-    ITEMS_PER_PAGE = 5
     
     while True:
         start = page * ITEMS_PER_PAGE
@@ -288,20 +284,9 @@ def return_item():
             index = int(choice) - 1
             if 0 <= index < len(borrowed_books):
                 transaction_id = borrowed_books[index][0]
-                cursor.execute("""
-                    UPDATE BorrowingTransactions
-                    SET ReturnDate=DATE('now')
-                    WHERE TransactionID=?
-                """, (transaction_id,))
-                
-                cursor.execute("""
-                    UPDATE LibraryCopy
-                    SET Status='onShelf'
-                    WHERE CopyID=(
-                        SELECT CopyID FROM BorrowingTransactions WHERE TransactionID=?
-                    )
-                """, (transaction_id,))
-                
+                cursor.execute("UPDATE BorrowingTransactions SET ReturnDate=DATE('now') WHERE TransactionID=?", (transaction_id,))
+                calculate_fines()
+                cursor.execute("UPDATE LibraryCopy SET Status='onShelf' WHERE CopyID=(SELECT CopyID FROM BorrowingTransactions WHERE TransactionID=?)", (transaction_id,))
                 conn.commit()
                 print("\nItem returned successfully!")
                 return
@@ -311,6 +296,7 @@ def return_item():
             print("Invalid choice. Try again.")
 
 def register_account():
+    """Creates a new borrower account in the library system"""
     print("\n--- Register a New Library Account ---")
 
     while True:
@@ -325,31 +311,23 @@ def register_account():
             break
         print("Email cannot be empty. Please try again.")
 
-
     phone = input("Enter your Phone Number: ").strip()
     address = input("Enter your Address: ").strip()
    
     try:
-        cursor.execute(
-            """
-            INSERT INTO Borrowers (Name, Email, PhoneNumber, Address)
-            VALUES (?, ?, ?, ?)
-            """,
-            (name, email, phone, address)
-        )
+        cursor.execute("INSERT INTO Borrowers (Name, Email, PhoneNumber, Address) VALUES (?, ?, ?, ?)",
+                       (name, email, phone, address))
         conn.commit()
         borrower_id = cursor.lastrowid
         print(f"\nAccount created successfully! Your Borrower ID is: {borrower_id}")
     except sql.Error as e:
         print("Error registering account:", e)
 
-
 def find_event():
+    """Searches for library events with pagination"""
     event_name = input("Enter the name of the event you're looking for: ")
-
     cursor.execute("SELECT * FROM Events WHERE EventName LIKE ?", (f"%{event_name}%",))
     events = cursor.fetchall()
-    
     columns = [desc[0] for desc in cursor.description]
 
     if not events:
@@ -394,97 +372,96 @@ def find_event():
         else:
             print("Invalid choice. Try again.")
 
+def view_event_details(event):
+    """Displays detailed information about a specific event."""
+    columns = [desc[0] for desc in cursor.description]
+    print("\n" + "="*50)
+    print("EVENT DETAILS".center(50))
+    print("="*50)
     
+    for col, val in zip(columns, event):
+        print(f"{col:<20}: {val}")
+    
+    print("\nOptions:")
+    print("[R]egister for this event")
+    print("[B]ack to list")
+    print("[M]ain menu")
+    
+    while True:
+        choice = input("Choose an option: ").strip().lower()
+        if choice == 'r':
+            register_event(event[0]) 
+            return
+        elif choice == 'b':
+            return
+        elif choice == 'm':
+            main_menu()
+            return
+        else:
+            print("Invalid choice. Try again.")
+
 def register_event(event_id=None):
-    """
-    Registers a borrower for an event in the Events table
-    by adding a row to the EventRegistration table.
-    """
+    """Registers a borrower for a library event"""
     print("\n--- Register for an Event ---")
-    
-    # 1) Prompt for Borrower ID
     borrower_id = input("Enter your Borrower ID: ")
     
-    # Confirm borrower exists
     cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
     borrower = cursor.fetchone()
     if not borrower:
         print("Invalid Borrower ID. Please create an account first or recheck your ID.")
         return
 
-    # 2) Prompt for Event ID if not provided
     if not event_id:
         event_id = input("Enter the Event ID you want to register for: ")
 
-    # Check if the event exists
     cursor.execute("SELECT * FROM Events WHERE EventID=?", (event_id,))
     event_row = cursor.fetchone()
     if not event_row:
         print("No event found with that ID.")
         return
 
-    # 3) Check if already registered (optional check for user-friendly message)
-    cursor.execute("""
-        SELECT *
-        FROM EventRegistration
-        WHERE EventID=? AND BorrowerID=?
-    """, (event_id, borrower_id))
+    cursor.execute("SELECT * FROM EventRegistration WHERE EventID=? AND BorrowerID=?", (event_id, borrower_id))
     existing_registration = cursor.fetchone()
     if existing_registration:
         print("You are already registered for this event.")
         return
 
-    # 4) Insert new row into EventRegistration
     try:
-        cursor.execute("""
-            INSERT INTO EventRegistration (EventID, BorrowerID, RegistrationDate)
-            VALUES (?, ?, DATE('now'))
-        """, (event_id, borrower_id))
+        cursor.execute("INSERT INTO EventRegistration (EventID, BorrowerID, RegistrationDate) VALUES (?, ?, DATE('now'))",
+                       (event_id, borrower_id))
         conn.commit()
-
         registration_id = cursor.lastrowid
         print(f"Successfully registered for the event!")
         print(f"Your Event Registration ID is: {registration_id}")
-
     except sql.IntegrityError as e:
-        # This handles any UNIQUE constraint errors, etc.
         print("Error registering for the event (duplicate or constraint issue).")
-        print("Details:", e)
+
 def volunteer():
+    """Registers a new volunteer for the library"""
     print("\n--- Volunteer for the Library ---")
+    name = input("Enter your Name: ")
+    email = input("Enter your Email: ")
+    phone = input("Enter your Phone Number: ")
 
-    name=input("Enter your Name: ")
-    email=input("Enter your Email: ")
-    phone=input("Enter your Phone Number: ")
-
-    cursor.execute(
-        """
-        SELECT * FROM Personnel
-        WHERE Name=? AND Email=? AND Role='Volunteer'
-        """,(name,email)
-    )
-    existing=cursor.fetchone()
+    cursor.execute("SELECT * FROM Personnel WHERE Name=? AND Email=? AND Role='Volunteer'", (name, email))
+    existing = cursor.fetchone()
     if existing:
         print("You are already a registered volunteer.")
         return
 
     try:
-        cursor.execute("""
-            INSERT INTO Personnel (Name,Role,Email,PhoneNumber)
-            VALUES (?,'Volunteer',?,?)
-        """, (name,email,phone))
+        cursor.execute("INSERT INTO Personnel (Name, Role, Email, PhoneNumber) VALUES (?,'Volunteer',?,?)",
+                       (name, email, phone))
         conn.commit()
-
-        staff_id=cursor.lastrowid
+        staff_id = cursor.lastrowid
         print("Successfully registered as a volunteer!")
         print(f"Your Volunteer ID is: {staff_id}")
     except sql.IntegrityError as e:
         print("Error registering as a volunteer (duplicate or constraint issue).")
-        
-def ask_help():
-    print("\n--- Ask a Librarian for Help ---")
 
-    # Search for all personnel with 'Librarian' in their role
+def ask_help():
+    """Displays available librarians and their contact information"""
+    print("\n--- Ask a Librarian for Help ---")
     cursor.execute("SELECT * FROM Personnel WHERE Role LIKE '%Librarian%'")
     librarians = cursor.fetchall()
 
@@ -536,9 +513,16 @@ def ask_help():
         else:
             print("Invalid choice. Try again.")
 
-        
-        
-
+def calculate_fines():
+    """Calculates and updates fines for overdue items."""
+    cursor.execute("""
+    UPDATE BorrowingTransactions 
+    SET FineAmount = JULIANDAY('now') - JULIANDAY(DueDate) * 0.50
+    WHERE ReturnDate IS NULL 
+    AND DueDate < DATE('now')
+    AND PaidStatus = 'Unpaid'
+    """)
+conn.commit()
 
 if __name__ == "__main__":
     main_menu()
