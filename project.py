@@ -6,47 +6,64 @@ cursor = conn.cursor()
 ITEMS_PER_PAGE = 5  
 
 def main_menu():
-    """Main menu interface for the library system with all available options"""
+    """Main menu interface for the library system with paginated options"""
     calculate_fines()
+    page = 0  
+    menu_pages = [
+        [
+            ("Find an item in the library", find_item),
+            ("Borrow an item", borrow_item),
+            ("Return a borrowed item", return_item),
+            ("Donate an item to the library", donate_item),
+            ("View your borrowed books", view_borrowed_books),
+            ("Pay fines", pay_fines),
+            ("Register for an account", register_account)
+        ],
+        [
+            ("Find an event in the library", find_event),
+            ("Register for an event", register_event),
+            ("Volunteer for the library", volunteer),
+            ("Ask for help from a librarian", ask_help)
+        ]
+    ]
+    
     while True:
-        print("\nLibrary System")
-        print("1. Find an item in the library")
-        print("2. Borrow an item from the library")
-        print("3. Return a borrowed item")
-        print("4. Donate an item to the library")
-        print("5. Find an event in the library")
-        print("6. Register for an event")
-        print("7. Volunteer for the library")
-        print("8. Ask for help from a librarian")
-        print("9. Register for an account")
-        print("10. Exit")
-
-        choice = input("\nSelect an option: ")
-        if choice == '10':
+        print("\n===== Library System =====")
+        print(f"=== Page {page+1} of {len(menu_pages)} ===")
+        
+        for i, (option_text, _) in enumerate(menu_pages[page], 1):
+            print(f"{i}. {option_text}")
+    
+        print("\nNavigation:")
+        if page < len(menu_pages)-1:
+            print("[N]ext Page")
+        if page > 0:
+            print("[P]revious Page")
+        print("[E]xit System")
+        
+        choice = input("\nSelect an option: ").strip().lower()
+        
+        if choice == 'n' and page < len(menu_pages)-1:
+            page += 1
+            continue
+        elif choice == 'p' and page > 0:
+            page -= 1
+            continue
+        elif choice == 'e':
             print("Exiting system. Goodbye!")
             break
-        elif choice == '1':
-            result = find_item()
-            if result == 'main_menu':
-                continue 
-        elif choice == '2':
-            borrow_item()
-        elif choice == '3':
-            return_item()
-        elif choice == '4':
-            donate_item()
-        elif choice == '5':
-            find_event()
-        elif choice == '6':
-            register_event()
-        elif choice == '7':
-            volunteer()
-        elif choice == '8':
-            ask_help()
-        elif choice=='9':
-            register_account()
+        
+        if choice.isdigit():
+            option_num = int(choice) - 1
+            if 0 <= option_num < len(menu_pages[page]):
+                _, function = menu_pages[page][option_num]
+                result = function()
+                if result == 'main_menu':
+                    continue
+            else:
+                print("Invalid option number.")
         else:
-            print("Invalid choice. Try again.")
+            print("Invalid choice. Please try again.")
 
 def find_item():
     """Provides options to list all items or search by title with pagination"""
@@ -183,6 +200,16 @@ def borrow_item(item_id=None, copy_id=None):
     if not borrower:
         print("Invalid Borrower ID.")
         return
+
+        # Check for unpaid fines
+    calculate_fines()
+    cursor.execute("SELECT SUM(FineAmount) FROM BorrowingTransactions WHERE BorrowerID=? AND PaidStatus='Unpaid'", (borrower_id,))
+    unpaid_fines = cursor.fetchone()[0] or 0
+    
+    if unpaid_fines > 0:
+        print(f"\nCannot borrow items - you have ${unpaid_fines:.2f} in unpaid fines.")
+        print("Please pay your fines first.")
+        return
     
     if not item_id:
         item_id = input("Enter the Item ID you want to borrow: ")
@@ -292,6 +319,94 @@ def return_item():
                 return
             else:
                 print("Invalid selection.")
+        else:
+            print("Invalid choice. Try again.")
+
+def pay_fines():
+    """Handles payment of fines for a borrower"""
+    borrower_id = input("Enter your Borrower ID: ")
+    cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
+    if not cursor.fetchone():
+        print("Invalid Borrower ID.")
+        return
+
+    # Calculate current fines
+    calculate_fines()
+    
+    cursor.execute("""
+        SELECT SUM(FineAmount) 
+        FROM BorrowingTransactions 
+        WHERE BorrowerID=? AND PaidStatus='Unpaid'
+    """, (borrower_id,))
+    
+    total_fines = cursor.fetchone()[0] or 0
+    
+    if total_fines <= 0:
+        print("\nYou have no outstanding fines.")
+        return
+    
+    print(f"\nYour total outstanding fines: ${total_fines:.2f}")
+    confirm = input("Would you like to pay all fines now? (Y/N): ").strip().lower()
+    
+    if confirm == 'y':
+        cursor.execute("""
+            UPDATE BorrowingTransactions 
+            SET PaidStatus='Paid', FineAmount=0 
+            WHERE BorrowerID=? AND PaidStatus='Unpaid'
+        """, (borrower_id,))
+        conn.commit()
+        print("\nPayment successful! All fines have been cleared.")
+    else:
+        print("\nPayment cancelled.")
+
+def view_borrowed_books():
+    """Displays all books currently borrowed by a user"""
+    borrower_id = input("Enter your Borrower ID: ")
+    cursor.execute("SELECT * FROM Borrowers WHERE BorrowerID=?", (borrower_id,))
+    if not cursor.fetchone():
+        print("Invalid Borrower ID.")
+        return
+
+    cursor.execute("""
+        SELECT li.ItemID, li.Title, li.AuthorCreator, bt.BorrowDate, bt.DueDate, bt.FineAmount
+        FROM BorrowingTransactions bt
+        JOIN LibraryCopy lc ON bt.CopyID = lc.CopyID
+        JOIN LibraryItem li ON lc.ItemID = li.ItemID
+        WHERE bt.BorrowerID = ? AND bt.ReturnDate IS NULL
+    """, (borrower_id,))
+    
+    borrowed_books = cursor.fetchall()
+    
+    if not borrowed_books:
+        print("\nYou have no books currently borrowed.")
+        return
+    
+    columns = ["Item ID", "Title", "Author", "Borrow Date", "Due Date", "Fine Amount"]
+    page = 0
+    
+    while True:
+        start = page * ITEMS_PER_PAGE
+        end = start + ITEMS_PER_PAGE
+        current_page = borrowed_books[start:end]
+
+        print("\n---------    Your Borrowed Books    ---------------")
+        print(" | ".join([f"{col:<15}" for col in columns]))
+        print("-" * (15 * len(columns) + 3 * (len(columns)-1)))
+
+        for i, book in enumerate(current_page, start=1 + start):
+            item_id, title, author, borrow_date, due_date, fine = book
+            print(f"{i:<4} | {item_id:<15} | {title[:15]:<15} | "
+                  f"{author[:15]:<15} | {borrow_date:<15} | ${fine:.2f}")
+
+        print("\nOptions: [N]ext Page | [P]revious Page | [M]ain Menu")
+        choice = input("\nChoose an option: ").strip().lower()
+
+        if choice == "n" and end < len(borrowed_books):
+            page += 1
+        elif choice == "p" and page > 0:
+            page -= 1
+        elif choice == "m":
+            return
         else:
             print("Invalid choice. Try again.")
 
@@ -517,12 +632,12 @@ def calculate_fines():
     """Calculates and updates fines for overdue items."""
     cursor.execute("""
     UPDATE BorrowingTransactions 
-    SET FineAmount = JULIANDAY('now') - JULIANDAY(DueDate) * 0.50
+    SET FineAmount = (JULIANDAY('now') - JULIANDAY(DueDate)) * 0.50
     WHERE ReturnDate IS NULL 
     AND DueDate < DATE('now')
     AND PaidStatus = 'Unpaid'
     """)
-conn.commit()
+    conn.commit()
 
 if __name__ == "__main__":
     main_menu()
